@@ -212,3 +212,7 @@ spring:
     publisher-confirms: true #开启消息确认机制
     publisher-returns: true #开启发送失败退回
 
+
+
+![59279435203](C:\Users\ADMINI~1.201\AppData\Local\Temp\1592794352039.png)
+
