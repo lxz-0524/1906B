@@ -1,0 +1,576 @@
+# 1、Swagger
+
+## 1.1介绍及使用
+
+Swagger：是一个实现了OpenAPI规范的工具集，用于生成、调用API文档并提供可视化 RESTful 风格的 Web 服务。
+
+## 1.2Swagger使用
+
+修改usian_item_web
+
+### 1.2.1pom.xml
+
+```xml
+<dependency>
+    <groupId>io.springfox</groupId>
+    <artifactId>springfox-swagger2</artifactId>
+    <version>2.8.0</version>
+</dependency>
+<dependency>
+    <groupId>io.springfox</groupId>
+    <artifactId>springfox-swagger-ui</artifactId>
+    <version>2.8.0</version>
+</dependency>
+```
+
+### 1.2.2config
+
+```java
+@Configuration
+@EnableSwagger2
+public class SwaggerConfig {
+    @Bean
+    public Docket api() {
+        return new Docket(DocumentationType.SWAGGER_2)
+                .apiInfo(apiInfo())
+                .select()
+                .apis(RequestHandlerSelectors.basePackage("com.usian.controller"))
+                .paths(PathSelectors.any())
+                .build();
+    }
+
+​```
+private ApiInfo apiInfo() {
+    return new ApiInfoBuilder()
+            .title("优思安商城后台管理系统")
+            .description("商品管理模块接口文档")
+            .version("1.0")
+            .build();
+}
+​```
+
+}
+```
+
+### 1.2.3pojo
+
+```java
+@ApiModel
+public class TbItem {
+    @ApiModelProperty(hidden = true)
+    private Long id;
+
+@ApiModelProperty(value="商品名称",required = true)
+private String title;
+
+@ApiModelProperty(value="卖点",required = true)
+private String sellPoint;
+
+@ApiModelProperty(value="价格",required = true)
+private Long price;
+
+@ApiModelProperty(value="库存",required = true)
+private Integer num;
+```
+
+### 1.2.4controller
+
+```java
+@RestController
+@RequestMapping("/backend/item")
+@Api("商品管理接口")
+public class ItemController {
+    @Autowired
+    private ItemServiceFeign itemServiceFeignClient;
+
+​```
+/**
+ * 查询商品基本信息
+ */
+@RequestMapping(value="/selectItemInfo",method = RequestMethod.POST)
+@ApiOperation(value = "查询商品基本信息",notes = "根据itemId查询该商品的基本信息")
+@ApiImplicitParam(name="itemId",required = true,type = "Long",value = "商品id")
+@ApiResponses({
+        @ApiResponse(code = 200,message = "查询成功"),
+        @ApiResponse(code = 500,message = "查无结果")
+})
+public Result selectItemInfo(Long itemId) {
+    TbItem tbItem = itemServiceFeignClient.selectItemInfo(itemId);
+    if (tbItem != null) {
+        return Result.ok(tbItem);
+    }
+    return Result.error("查无结果");
+}
+
+/**
+ * 查询商品并分页处理
+ *
+ * @return
+ */
+@GetMapping("/selectTbItemAllByPage")
+@ApiOperation(value = "查询商品并分页处理",notes = "分页查询商品信息，每页显示2条")
+@ApiImplicitParams({
+        @ApiImplicitParam(name="page",required = false,type = "Integer",value = "页码",defaultValue = "1"),
+        @ApiImplicitParam(name="rows",required = false,type = "Integer",value = "每页多少条",defaultValue = "2")
+})
+@ApiResponses({
+        @ApiResponse(code = 200,message = "查询成功"),
+        @ApiResponse(code = 500,message = "查无结果")
+})
+public Result selectTbItemAllByPage(@RequestParam(defaultValue = "1")
+              Integer page, @RequestParam(defaultValue = "2") Integer rows) {
+
+    PageResult pageResult = itemServiceFeignClient.selectTbItemAllByPage(page, rows);
+    if (pageResult != null && pageResult.getResult() != null &&
+            pageResult.getResult().size() > 0) {
+        return Result.ok(pageResult);
+    }
+    return Result.error("查无结果");
+
+}
+
+/**
+ * 添加商品
+ */
+@PostMapping("/insertTbItem")
+@ApiOperation(value = "添加商品",notes = "添加商品及描述和规格参数信息")
+@ApiImplicitParams({
+        @ApiImplicitParam(name="desc",required = true,type = "String",value = "商品描述信息"),
+        @ApiImplicitParam(name="itemParams",required = true,type = "String",value = "商品规格参数")
+})
+@ApiResponses({
+        @ApiResponse(code = 200,message = "添加成功"),
+        @ApiResponse(code = 500,message = "添加失败")
+})
+public Result insertTbItem(TbItem tbItem,String desc,String itemParams){
+    Integer insertTbItemNum = itemServiceFeignClient.insertTbItem(tbItem, desc, itemParams);
+    if(insertTbItemNum==3){
+        return Result.ok();
+    }
+    return Result.error("添加失败");
+}
+​```
+
+}
+```
+
+### 1.2.5常用注解说明
+
+```java
+ @Api：修饰整个类，描述Controller的作用
+ @ApiOperation：描述一个类的一个方法，或者说一个接口
+ @ApiParam：单个参数描述
+ @ApiModel：用对象来接收参数
+ @ApiProperty：用对象接收参数时，描述对象的一个字段
+ @ApiResponse：HTTP响应其中1个描述
+ @ApiResponses：HTTP响应整体描述
+ @ApiIgnore：使用该注解忽略这个API
+ @ApiError ：发生错误返回的信息
+ @ApiImplicitParam：一个请求参数
+ @ApiImplicitParams：多个请求参数
+```
+
+### 1.2.6测试：访问swagger接口
+
+启动服务，然后访问：http://localhost:8091/swagger-ui.html
+
+# 2.网关服务
+
+## 2.1.网关服务分析
+
+### 2.1.1.需求
+
+#### 2.1.1.1.路由
+
+所有请求都通过网关访问服务的consumer
+
+#### 2.1.1.2.容错
+
+客户端通过zuul无法调用consumer时，使用zuul对consumer进行降级
+
+#### 2.1.1.3.限流
+
+使用令牌桶算法实现zuul对consumer的限流
+
+## 2.2.工程搭建
+
+### 2.2.1创建common_zuul
+
+#### 2.2.1.1.pom.xml
+
+```xml
+<dependencies>
+    <!--Spring Boot Web Starter-->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <!--Spring Cloud Eureka Client Starter-->
+    <dependency>
+        <groupId>org.springframework.cloud</groupId>
+        <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+    </dependency>
+    <!--Spring Cloud Zuul Starter-->
+    <dependency>
+        <groupId>org.springframework.cloud</groupId>
+        <artifactId>spring-cloud-starter-netflix-zuul</artifactId>
+    </dependency>
+</dependencies>
+```
+
+#### 2.2.1.2.application.yml
+
+```yml
+spring:
+  application:
+    name: common-zuul
+server:
+  port: 7070
+eureka:
+  client:
+    service-url:
+      defaultZone: http://127.0.0.1:8761/eureka/
+zuul:
+  ignored-services: * #忽略的服务,多个可以用*
+```
+
+#### 2.2.1.3.logback.xml
+
+#### 2.2.1.4.创建启动类
+
+ * ```java
+    /**
+
+    - CommonZuulServer
+      */
+      @SpringBootApplication
+      @EnableDiscoveryClient
+      @EnableZuulProxy
+      public class ZuulApp {
+      public static void main(String[] args) {
+          SpringApplication.run(ZuulApp.class, args);
+      }
+      }
+    ```
+
+    ## 2.3.网关路由
+
+    ### 2.3.1配置后台服务代理
+
+    #### 2.3.1.1.usian-manage-web
+
+    ##### 2.3.1.1.1.vue.config.js
+
+    ```js
+    module.exports = {
+        devServer: {
+            proxy: {
+                '/product_api': {
+                    //target: 'http://127.0.0.1:8091',
+                    target: 'http://127.0.0.1:7070',
+                    pathRewrite: {
+                        '^/product_api': ''
+                    },
+                    changeOrigin: true
+                },
+                '/content_api': {
+                    //target: 'http://127.0.0.1:8093',
+                    target: 'http://127.0.0.1:7070',
+                    pathRewrite: {
+                        '^/content_api': ''
+                    },
+                    changeOrigin: true
+                },
+                '/search_api': {
+                    //target: 'http://127.0.0.1:8096',
+                    target: 'http://127.0.0.1:7070',
+                    pathRewrite: {
+                        '^/search_api': ''
+                    },
+                    changeOrigin: true
+                }
+            },
+            disableHostCheck: true
+        }
+    }
+    ```
+
+    ##### 2.3.1.1.2.base.js
+
+    修改src/api/base.js
+
+    ```js
+    const base = {
+        baseUrl:"/api",
+        basePrductUrl:"/product_api/backend_item",
+        baseContentUrl:"/content_api/backend_content",
+        baseSearchUrl:"/search_api/frontend_search",
+        ... ... ...
+    }  
+    ```
+
+    #### 2.3.1.2.common_zuul
+
+    ##### 2.3.1.2.1.application.yml
+
+    ```yml
+    zuul:
+      routes:
+        usian-item-web:
+          path: /backend_item/**
+        usian-content-web:
+          path: /backend_content/**
+        usian-search-web:
+          path: /frontend_search/**	
+    ```
+
+    ### 2.3.2.配置前台服务代理
+
+    #### 2.3.2.1.usian-portal-web
+
+    ##### 2.3.2.1.1.vue.config.js
+
+     修改 vue.config.js
+
+    ```js
+    module.exports = {
+        // publicPath: process.env.NODE_ENV === 'production'
+        //     ? ''
+        //     : '/',
+        devServer: {
+            port:8081,
+            proxy: {
+                '/api': {
+                    //target: 'http://127.0.0.1:8094',
+                    target: 'http://127.0.0.1:7070',
+                    pathRewrite: {
+                        '^/api': ''
+                    },
+                    changeOrigin: true
+                },
+                '/search_api': {
+                    //target: 'http://127.0.0.1:8096',
+                    target: 'http://127.0.0.1:7070',
+                    pathRewrite: {
+                        '^/search_api': ''
+                    },
+                    changeOrigin: true
+                },
+                '/detail_api': {
+                    //target: 'http://127.0.0.1:8097',
+                    target: 'http://127.0.0.1:7070',
+                    pathRewrite: {
+                        '^/detail_api': ''
+                    },
+                    changeOrigin: true
+                },
+                '/shopcar_api': {
+                    //target: 'http://127.0.0.1:8101',
+                    target: 'http://127.0.0.1:7070',
+                    pathRewrite: {
+                        '^/shopcar_api': ''
+                    },
+                    changeOrigin: true
+                },
+                "/payment_api": {
+                    //target: 'http://127.0.0.1:8103',
+                    target: 'http://127.0.0.1:7070',
+                    pathRewrite: {
+                        '^/payment_api': ''
+                    },
+                    changeOrigin: true
+                },
+                "/register_api": {
+                    //target: 'http://127.0.0.1:8099',
+                    target: 'http://127.0.0.1:7070',
+                    pathRewrite: {
+                        '^/register_api': ''
+                    },
+                    changeOrigin: true
+                }
+            }
+        }
+    }
+    ```
+
+    ##### 2.3.2.1.2.base.js
+
+    修改src/api/base.js
+
+    ```js
+    const base = {
+        baseUrl: '/api/frontend_portal',
+        shopcarBaseUrl: "/shopcar_api/frontend_cart",
+        searchBaseUrl: "/search_api/frontend_search",
+        detailBaseUrl: "/detail_api/frontend_detail",
+        registerBaseUrl: "/register_api/frontend_sso",
+        payMentBaseUrl:"/payment_api/frontend_order",
+        ... ... ...
+    }
+    ```
+
+    #### 2.3.2.2.common_zuul
+
+    ##### 2.3.2.2.1.application.yml
+
+    ```yml
+    zuul:
+      sensitive-headers: true #全局配置，解决在网关服务中不传递请求头的问题
+      routes:    
+        usian-portal-web:
+          path: /frontend_portal/**
+        usian-detail-web:
+          path: /frontend_detail/**
+        usian-sso-web:
+          path: /frontend_sso/**
+        usian-cart-web:
+          path: /frontend_cart/**
+        usian-order-web:
+          path: /frontend_order/**	
+    ```
+
+    ### 2.3.3.测试
+
+    测试商城前台和后台是否能正常访问
+
+    ## 2.4.网关容错
+
+    ### 2.4.1.common_zuul
+
+    #### 2.4.1.1.fallback
+
+    ```java
+    @Component
+    public class ConsumerFallback implements FallbackProvider {
+        @Override
+        public String getRoute() {
+            //降级的服务名，多个服务return "*"
+            return "*";
+        }
+
+    ​```
+    /**
+     * 当服务无法执行时，该方法返回托底信息
+     */
+    @Override
+    public ClientHttpResponse fallbackResponse(String route, Throwable cause) {
+        return new ClientHttpResponse() {
+
+            /**
+             * 设置响应的头信息
+             */
+            @Override
+            public HttpHeaders getHeaders() {
+                HttpHeaders header = new HttpHeaders();
+                MediaType mt = new MediaType("application","json", Charset.forName("utf-8"));
+                header.setContentType(mt);
+                return header;
+            }
+
+            /**
+             * 设置响应体
+             */
+            @Override
+            public InputStream getBody() throws IOException {
+                String content = "该服务暂时不可用，请稍后重试";
+                return new ByteArrayInputStream(content.getBytes());
+            }
+
+            /**
+             * ClientHttpResponse的fallback的状态码 返回String
+             */
+            @Override
+            public String getStatusText() throws IOException {
+                return this.getStatusCode().getReasonPhrase();
+            }
+
+            /**
+             * 网关向api服务请求是失败了，但是消费者客户端向网关发起的请求是OK的，
+             * 不应该把api的404,500等问题抛给客户端
+             * 网关和api服务集群对于客户端来说是黑盒子
+             */
+            @Override
+            public HttpStatus getStatusCode() throws IOException {
+                return HttpStatus.OK;
+            }
+
+            /**
+             * ClientHttpResponse的fallback的状态码 返回int
+             */
+            @Override
+            public int getRawStatusCode() throws IOException {
+                return this.getStatusCode().value();
+            }
+            @Override
+            public void close() {
+
+            }
+        };
+    }
+    ​```
+
+    }	
+    ```
+
+    ### 测试：
+
+    关闭服务项目，访问进行测试
+
+    ## 2.5.网关限流
+
+    ### 2.5.1.common_zuul
+
+    #### 2.5.1.1.filter
+
+     * ```java
+        /**
+
+        - 限流器
+          */
+          @Component
+          public class RateLimitFilter extends ZuulFilter {
+          // 创建令牌桶
+          //RateLimiter.create(1)1: 是每秒生成令牌的数量
+          // 数值越大代表处理请求量月多，数值越小代表处理请求量越少
+          private static final RateLimiter RATE_LIMIT = RateLimiter.create(1);
+
+          @Override
+          public String filterType() {
+              return FilterConstants.PRE_TYPE;
+          }
+
+          /**
+
+          - 限流器的优先级应为最高
+            *
+          - @return
+            */
+            @Override
+            public int filterOrder() {
+            return FilterConstants.SERVLET_DETECTION_FILTER_ORDER;
+            }
+
+          @Override
+          public boolean shouldFilter() {
+              return true;
+          }
+
+          @Override
+          public Object run() throws ZuulException {
+              //是否能从令牌桶中获取到令牌
+              if (!RATE_LIMIT.tryAcquire()) {
+                  RequestContext requestContext =
+                          RequestContext.getCurrentContext();
+                  requestContext.setSendZuulResponse(false);
+                  requestContext.setResponseBody(JsonUtils.objectToJson(
+                      		Result.error("访问太多频繁，请稍后再访问！！！")));
+                  requestContext.getResponse().setContentType("application/json; charset=utf-8");
+              }
+              return null;
+          }
+          }
+        ```
+
+        ​
+
+    ​
